@@ -65,6 +65,7 @@
             :highlight-midi="practice.currentQuestion?.midi"
             :feedback-midi="practice.feedbackMidi"
             :feedback="practice.feedback"
+            :active-midi="activeMidi"
             :show-label="false"
             @note="handleNote"
           />
@@ -112,6 +113,7 @@ const store = usePracticeStore()
 const practice = store
 
 const tab = ref('practice')
+const activeMidi = ref(null)
 const session = computed(() => practice.sessionStats)
 
 const themeClass = computed(() => `theme-${store.settings.theme}`)
@@ -164,6 +166,7 @@ function onKeydown(e) {
   const midi = keyToMidi(e.key)
   if (midi != null) {
     e.preventDefault()
+    activeMidi.value = midi
     handleNote(midi)
   } else if (e.key === ' ' || e.key === 'Enter') {
     if (practice.currentQuestion && practice.feedback) {
