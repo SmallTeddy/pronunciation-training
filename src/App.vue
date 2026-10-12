@@ -53,8 +53,8 @@
 
         <div class="buttons-area">
           <NoteButtons
-            :correct-letter="correctLetter"
-            :wrong-letter="wrongLetter"
+            :feedback-letter="feedbackLetter"
+            :feedback-correct="feedbackCorrect"
             :active-letter="activeLetter"
             :disabled="!practice.questions.length || practice.isGroupComplete"
             @answer="handleAnswer"
@@ -111,20 +111,10 @@ const accuracy = computed(() => {
   return Math.round((session.value.correct / session.value.total) * 100)
 })
 
-// 当前正确答案的音名（用于按钮绿色高亮）
-const correctLetter = computed(() => {
-  const q = practice.currentQuestion
-  if (!q) return null
-  return getNoteLetter(q.midi)
-})
-
-// 用户最近答错的音名（用于按钮红色高亮）
-const wrongLetter = computed(() => {
-  if (lastAnswer.value.letter && !lastAnswer.value.correct) {
-    return lastAnswer.value.letter
-  }
-  return null
-})
+// 用户最近一次作答的字母（用于按钮反馈，不预先显示正确答案）
+const feedbackLetter = computed(() => lastAnswer.value.letter)
+// 最近一次作答是否正确
+const feedbackCorrect = computed(() => lastAnswer.value.correct)
 
 // 电脑键盘到音名的映射：D F G H J K L -> C D E F G A B
 const KEY_MAP = {
@@ -312,7 +302,7 @@ watch(
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
-  overflow: hidden;
+  overflow: visible;
   flex-shrink: 0;
 }
 .buttons-area {

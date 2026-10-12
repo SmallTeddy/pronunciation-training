@@ -6,8 +6,8 @@
       class="note-btn"
       :class="{
         'is-pressed': pressedLetter === btn.letter,
-        'is-correct': correctLetter === btn.letter,
-        'is-wrong': wrongLetter === btn.letter,
+        'is-correct': feedbackLetter === btn.letter && feedbackCorrect,
+        'is-wrong': feedbackLetter === btn.letter && !feedbackCorrect,
       }"
       @mousedown="press(btn.letter)"
       @mouseup="release"
@@ -25,10 +25,10 @@
 import { ref, watch } from 'vue'
 
 const props = defineProps({
-  // 当前正确的音（用于绿色高亮）
-  correctLetter: { type: String, default: null },
-  // 用户答错的音（用于红色高亮）
-  wrongLetter: { type: String, default: null },
+  // 用户最近一次作答的字母（仅在作答后短暂高亮，不预先显示正确答案）
+  feedbackLetter: { type: String, default: null },
+  // 最近一次作答是否正确
+  feedbackCorrect: { type: Boolean, default: false },
   // 键盘按下时触发的字母
   activeLetter: { type: String, default: null },
   disabled: { type: Boolean, default: false },
