@@ -17,12 +17,12 @@
       <section v-if="tab === 'practice'" class="practice-page">
         <div class="practice-info-bar">
           <div class="info-item">
-            <span class="info-label">模式</span>
-            <span class="info-value">{{ modeLabel }}</span>
+            <span class="info-label">进度</span>
+            <span class="info-value">{{ practice.currentIndex + 1 }}/{{ practice.questions.length || 8 }}</span>
           </div>
           <div class="info-item">
-            <span class="info-label">已答</span>
-            <span class="info-value">{{ session.total }}</span>
+            <span class="info-label">组数</span>
+            <span class="info-value">{{ practice.groupCount + (practice.questions.length ? 1 : 0) }}</span>
           </div>
           <div class="info-item">
             <span class="info-value correct">✓ {{ session.correct }}</span>
@@ -43,42 +43,29 @@
         <div class="staff-area">
           <StaffDisplay
             :clef-mode="store.settings.clefMode"
-            :current-note="practice.currentQuestion"
+            :questions="practice.questions"
+            :current-index="practice.currentIndex"
             :show-note-name="store.settings.showNoteName"
             :show-solfege="store.settings.showSolfege"
             :use-flat="store.settings.useFlat"
           />
         </div>
 
-        <div class="feedback-area">
-          <transition name="pop">
-            <div v-if="practice.feedback" class="feedback-msg" :class="practice.feedback">
-              <template v-if="practice.feedback === 'correct'">✓ 正确！</template>
-              <template v-else>✗ 错误！正确答案是 {{ correctName }}</template>
-            </div>
-          </transition>
-        </div>
-
-        <div class="keyboard-area">
-          <PianoKeyboard
-            :range="store.settings.noteRange"
-            :highlight-midi="practice.currentQuestion?.midi"
-            :feedback-midi="practice.feedbackMidi"
-            :feedback="practice.feedback"
-            :active-midi="activeMidi"
-            :show-label="false"
-            @note="handleNote"
+        <div class="buttons-area">
+          <NoteButtons
+            :correct-letter="correctLetter"
+            :wrong-letter="wrongLetter"
+            :active-letter="activeLetter"
+            :disabled="!practice.questions.length || practice.isGroupComplete"
+            @answer="handleAnswer"
           />
         </div>
 
         <div class="action-bar">
-          <button v-if="!practice.currentQuestion" class="btn-primary" @click="start">
+          <button v-if="!practice.questions.length" class="btn-primary" @click="start">
             {{ practice.practiceMode === 'timed' ? '开始限时挑战' : '开始练习' }}
           </button>
           <button v-else class="btn-secondary" @click="end">结束练习</button>
-          <button v-if="practice.currentQuestion && practice.feedback" class="btn-ghost" @click="practice.nextQuestion()">
-            下一题 →
-          </button>
         </div>
       </section>
 
@@ -103,43 +90,46 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { usePracticeStore } from './stores/practice.js'
 import StaffDisplay from './components/Staff/StaffDisplay.vue'
-import PianoKeyboard from './components/PianoKeyboard/PianoKeyboard.vue'
+import NoteButtons from './components/NoteButtons/NoteButtons.vue'
 import StatsPanel from './components/Stats/StatsPanel.vue'
 import SettingsPanel from './components/Settings/SettingsPanel.vue'
-import { keyToMidi, midiToNoteName, midiToNoteNameFlat } from './utils/musicTheory.js'
+import { getNoteLetter } from './utils/musicTheory.js'
 import { resumeAudio } from './services/audio.js'
 
 const store = usePracticeStore()
 const practice = store
 
 const tab = ref('practice')
-const activeMidi = ref(null)
+const activeLetter = ref(null)
+const lastAnswer = ref({ letter: null, correct: false })
 const session = computed(() => practice.sessionStats)
 
 const themeClass = computed(() => `theme-${store.settings.theme}`)
-
-const modeLabel = computed(() => {
-  const map = {
-    free: '自由练习',
-    treble: '高音谱表',
-    bass: '低音谱表',
-    mixed: '双谱表混合',
-    wrong: '错题强化',
-    timed: '限时挑战',
-  }
-  return map[practice.practiceMode] || '自由练习'
-})
 
 const accuracy = computed(() => {
   if (session.value.total === 0) return 0
   return Math.round((session.value.correct / session.value.total) * 100)
 })
 
-const correctName = computed(() => {
-  if (!practice.currentQuestion) return ''
-  const m = practice.currentQuestion.midi
-  return store.settings.useFlat ? midiToNoteNameFlat(m) : midiToNoteName(m)
+// 当前正确答案的音名（用于按钮绿色高亮）
+const correctLetter = computed(() => {
+  const q = practice.currentQuestion
+  if (!q) return null
+  return getNoteLetter(q.midi)
 })
+
+// 用户最近答错的音名（用于按钮红色高亮）
+const wrongLetter = computed(() => {
+  if (lastAnswer.value.letter && !lastAnswer.value.correct) {
+    return lastAnswer.value.letter
+  }
+  return null
+})
+
+// 电脑键盘到音名的映射：D F G H J K L -> C D E F G A B
+const KEY_MAP = {
+  d: 'C', f: 'D', g: 'E', h: 'F', j: 'G', k: 'A', l: 'B',
+}
 
 function switchTab(t) {
   if (t === 'stats') store.refreshData()
@@ -155,24 +145,31 @@ function end() {
   practice.endSession()
 }
 
-function handleNote(midi) {
-  practice.answer(midi)
+function handleAnswer(letter) {
+  const q = practice.currentQuestion
+  if (!q) return
+  const correct = getNoteLetter(q.midi) === letter
+  lastAnswer.value = { letter, correct }
+  practice.answer(letter)
+  // 短暂清除错误高亮
+  if (correct) {
+    setTimeout(() => { lastAnswer.value = { letter: null, correct: false } }, 200)
+  } else {
+    setTimeout(() => { lastAnswer.value = { letter: null, correct: false } }, 400)
+  }
 }
 
 // 键盘快捷键
 function onKeydown(e) {
   if (tab.value !== 'practice') return
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return
-  const midi = keyToMidi(e.key)
-  if (midi != null) {
+  const letter = KEY_MAP[e.key.toLowerCase()]
+  if (letter) {
     e.preventDefault()
-    activeMidi.value = midi
-    handleNote(midi)
+    activeLetter.value = letter
+    handleAnswer(letter)
   } else if (e.key === ' ' || e.key === 'Enter') {
-    if (practice.currentQuestion && practice.feedback) {
-      e.preventDefault()
-      practice.nextQuestion()
-    } else if (!practice.currentQuestion) {
+    if (!practice.questions.length) {
       e.preventDefault()
       start()
     }
@@ -188,7 +185,6 @@ onBeforeUnmount(() => {
   practice.endSession()
 })
 
-// 主题变化时更新 html class
 watch(
   () => store.settings.theme,
   (theme) => {
@@ -211,22 +207,23 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 24px;
+  padding: 10px 16px;
   background: var(--card-bg);
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .brand .logo {
-  font-size: 28px;
+  font-size: 24px;
 }
 .brand h1 {
-  font-size: 20px;
+  font-size: 18px;
   margin: 0;
   font-weight: 800;
   background: linear-gradient(135deg, var(--accent), #a78bfa);
@@ -236,16 +233,16 @@ watch(
 }
 .tabs {
   display: flex;
-  gap: 6px;
+  gap: 4px;
 }
 .tabs button {
-  padding: 8px 18px;
-  border-radius: 10px;
+  padding: 6px 14px;
+  border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   transition: all 0.15s;
 }
@@ -258,36 +255,42 @@ watch(
 }
 .app-main {
   flex: 1;
-  padding: 20px;
+  padding: 12px;
   max-width: 1100px;
   width: 100%;
   margin: 0 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .practice-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
 }
 .practice-info-bar {
   display: flex;
-  gap: 16px;
+  gap: 14px;
   flex-wrap: wrap;
-  padding: 12px 16px;
+  padding: 8px 14px;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
+  flex-shrink: 0;
 }
 .info-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .info-label {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
 }
 .info-value {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
 }
 .info-value.correct {
@@ -307,51 +310,31 @@ watch(
 .staff-area {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-  overflow-x: auto;
-}
-.feedback-area {
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.feedback-msg {
-  padding: 8px 20px;
   border-radius: 10px;
-  font-size: 18px;
-  font-weight: 700;
+  padding: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
 }
-.feedback-msg.correct {
-  background: rgba(52, 211, 153, 0.15);
-  color: #34d399;
-  border: 1px solid rgba(52, 211, 153, 0.4);
-}
-.feedback-msg.wrong {
-  background: rgba(248, 113, 113, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(248, 113, 113, 0.4);
-}
-.keyboard-area {
+.buttons-area {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-  overflow-x: auto;
+  border-radius: 10px;
+  padding: 12px;
+  flex-shrink: 0;
 }
 .action-bar {
   display: flex;
   gap: 10px;
   justify-content: center;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .btn-primary,
 .btn-secondary,
 .btn-ghost {
-  padding: 12px 28px;
+  padding: 10px 24px;
   border-radius: 10px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   border: none;
@@ -388,21 +371,14 @@ watch(
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
+  overflow-y: auto;
 }
 .app-footer {
   text-align: center;
-  padding: 16px;
-  font-size: 12px;
+  padding: 10px;
+  font-size: 11px;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
-}
-.pop-enter-active,
-.pop-leave-active {
-  transition: all 0.25s;
-}
-.pop-enter-from,
-.pop-leave-to {
-  opacity: 0;
-  transform: scale(0.9);
+  flex-shrink: 0;
 }
 </style>

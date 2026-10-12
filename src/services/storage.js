@@ -15,7 +15,7 @@ const defaultData = {
     showSolfege: false,
     useFlat: false,
     autoNextDelay: 1200,      // ms
-    theme: 'dark',
+    theme: 'light',
     soundEnabled: true,
     showHint: false,
     timedDuration: 60,        // 限时挑战秒数
