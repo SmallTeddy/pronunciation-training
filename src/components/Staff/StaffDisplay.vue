@@ -56,16 +56,18 @@ const COLORS = {
   current: '#f59e0b',
 }
 
-// 布局：一次显示 3 行五线谱，每行 2 小节，每小节 4 个音符 → 共 24 个音
-const SYSTEMS_PER_GROUP = 3
+// 布局：一次显示 4 行五线谱，每行 2 小节，每小节 4 个音符 → 共 32 个音
+const SYSTEMS_PER_GROUP = 4
 const MEASURES_PER_SYSTEM = 2
 const BEATS_PER_MEASURE = 4
 const NOTES_PER_SYSTEM = MEASURES_PER_SYSTEM * BEATS_PER_MEASURE // 8
-const TOTAL_NOTES = SYSTEMS_PER_GROUP * NOTES_PER_SYSTEM // 24
+const TOTAL_NOTES = SYSTEMS_PER_GROUP * NOTES_PER_SYSTEM // 32
 
 // 谱面设计尺寸（虚拟坐标，最终按容器等比缩放）
 const SVG_NS = 'http://www.w3.org/2000/svg'
-const STAVE_SPAN = 40 // 五线谱可视高度
+const STAVE_SPAN = 40 // 五线谱可视高度（5 条线的跨度 = 4 × 线距）
+const STAVE_HEADROOM = 40 // 谱表顶部预留空间（space_above_staff_ln × 线距 = 4 × 10）
+const STAVE_FULL_H = STAVE_HEADROOM + STAVE_SPAN // 从 Stave.y 到最底一条线的距离
 const TOP_MARGIN = 34
 const BOTTOM_PAD = 34
 
@@ -88,12 +90,14 @@ const SINGLE_DESIGN_H =
   TOP_MARGIN + SYSTEMS_PER_GROUP * SINGLE_SYS_H + (SYSTEMS_PER_GROUP - 1) * SINGLE_GAP + BOTTOM_PAD
 
 // 用于估算渲染宽度（贴近真实内容高度，减小等比缩放后的留白）
-const GRAND_EST_H = 600
-const SINGLE_EST_H = 470
+const GRAND_EST_H = 720
+const SINGLE_EST_H = 560
 
 function makeRest(clef) {
-  // 四分休止符：高音谱表放在 b/4（第三线），低音谱表放在 d/3（第三线）
-  const restKey = clef === 'treble' ? 'b/4' : 'd/3'
+  // 四分休止符：VexFlow 的四分休止符字形从基准线向上延伸，
+  // 为使休止符视觉居中于五线谱，将基准线设在第二线
+  // （高音谱表 g/4 = 第二线，低音谱表 b/2 = 第二线）
+  const restKey = clef === 'treble' ? 'g/4' : 'b/2'
   return new StaveNote({ keys: [restKey], duration: 'qr' })
 }
 
@@ -182,7 +186,7 @@ function collectXs(tickables, beatXs, offset) {
 }
 
 /**
- * 渲染大谱表（3 行 × 2 小节，每小节 4 拍）
+ * 渲染大谱表（4 行 × 2 小节，每小节 4 拍）
  */
 function renderGrandStaff(container, questions, width, height) {
   const renderer = new Renderer(container, Renderer.Backends.SVG)
@@ -262,12 +266,12 @@ function renderGrandStaff(container, questions, width, height) {
     const prevX = beatInMeasure > 0 && beatXs[ci - 1] != null ? beatXs[ci - 1] : x - 25
     const nextX =
       beatInMeasure < BEATS_PER_MEASURE - 1 && beatXs[ci + 1] != null ? beatXs[ci + 1] : x + 25
-    insertHighlight(container, x, prevX, nextX, trebleY, bassY + STAVE_SPAN)
+    insertHighlight(container, x, prevX, nextX, trebleY + STAVE_HEADROOM, bassY + STAVE_FULL_H)
   }
 }
 
 /**
- * 渲染单谱表（高音或低音单独模式，3 行 × 2 小节）
+ * 渲染单谱表（高音或低音单独模式，4 行 × 2 小节）
  */
 function renderSingle(container, clef, questions, width, height) {
   const renderer = new Renderer(container, Renderer.Backends.SVG)
@@ -326,7 +330,7 @@ function renderSingle(container, clef, questions, width, height) {
     const prevX = beatInMeasure > 0 && beatXs[ci - 1] != null ? beatXs[ci - 1] : x - 25
     const nextX =
       beatInMeasure < BEATS_PER_MEASURE - 1 && beatXs[ci + 1] != null ? beatXs[ci + 1] : x + 25
-    insertHighlight(container, x, prevX, nextX, staveY, staveY + STAVE_SPAN)
+    insertHighlight(container, x, prevX, nextX, staveY + STAVE_HEADROOM, staveY + STAVE_FULL_H)
   }
 }
 
@@ -363,7 +367,7 @@ function render() {
     const notes = props.questions
     if (notes.length === 0) return
 
-    // 依据容器可用宽高比推导渲染宽度，保证 3 行谱表等比缩放后尽量铺满
+    // 依据容器可用宽高比推导渲染宽度，保证 4 行谱表等比缩放后尽量铺满
     const cw = Math.max(container.clientWidth || 0, 320)
     const ch = Math.max(container.clientHeight || 0, 200)
     const isGrand = props.clefMode === 'both'

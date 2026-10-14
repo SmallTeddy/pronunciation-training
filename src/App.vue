@@ -18,7 +18,7 @@
         <div class="practice-info-bar">
           <div class="info-item">
             <span class="info-label">进度</span>
-            <span class="info-value">{{ practice.currentIndex + 1 }}/{{ practice.questions.length || 24 }}</span>
+            <span class="info-value">{{ practice.currentIndex + 1 }}/{{ practice.questions.length || 32 }}</span>
           </div>
           <div class="info-item">
             <span class="info-label">组数</span>
