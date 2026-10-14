@@ -6,7 +6,8 @@ import { generateQuestion } from '../services/questionGenerator.js'
 import { makeNoteId, getNoteLetter } from '../utils/musicTheory.js'
 import { playCorrectSound, playWrongSound, playNote } from '../services/audio.js'
 
-const GROUP_SIZE = 8
+// 每组题目数量：3 行 × 2 小节 × 4 拍 = 24 个音符
+const GROUP_SIZE = 24
 
 export const usePracticeStore = defineStore('practice', () => {
   const settings = ref(storage.getSettings())

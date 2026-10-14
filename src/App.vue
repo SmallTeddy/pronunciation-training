@@ -18,7 +18,7 @@
         <div class="practice-info-bar">
           <div class="info-item">
             <span class="info-label">进度</span>
-            <span class="info-value">{{ practice.currentIndex + 1 }}/{{ practice.questions.length || 8 }}</span>
+            <span class="info-value">{{ practice.currentIndex + 1 }}/{{ practice.questions.length || 24 }}</span>
           </div>
           <div class="info-item">
             <span class="info-label">组数</span>
@@ -51,6 +51,13 @@
           />
         </div>
 
+        <div class="action-bar">
+          <button v-if="!practice.questions.length" class="btn-primary" @click="start">
+            {{ practice.practiceMode === 'timed' ? '开始限时挑战' : '开始练习' }}
+          </button>
+          <button v-else class="btn-secondary" @click="end">结束练习</button>
+        </div>
+
         <div class="buttons-area">
           <NoteButtons
             :feedback-letter="feedbackLetter"
@@ -59,13 +66,6 @@
             :disabled="!practice.questions.length || practice.isGroupComplete"
             @answer="handleAnswer"
           />
-        </div>
-
-        <div class="action-bar">
-          <button v-if="!practice.questions.length" class="btn-primary" @click="start">
-            {{ practice.practiceMode === 'timed' ? '开始限时挑战' : '开始练习' }}
-          </button>
-          <button v-else class="btn-secondary" @click="end">结束练习</button>
         </div>
       </section>
 
@@ -80,7 +80,7 @@
       </section>
     </main>
 
-    <footer class="app-footer">
+    <footer v-if="tab !== 'practice'" class="app-footer">
       <span>五线谱识谱训练器 · 数据存储在本地浏览器</span>
     </footer>
   </div>
@@ -186,9 +186,11 @@ watch(
 
 <style scoped>
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   transition: background 0.3s, color 0.3s;
@@ -245,6 +247,7 @@ watch(
 }
 .app-main {
   flex: 1;
+  min-height: 0;
   padding: 12px;
   max-width: 1100px;
   width: 100%;
@@ -301,15 +304,17 @@ watch(
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 10px;
-  overflow: visible;
-  flex-shrink: 0;
+  padding: 8px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 .buttons-area {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px;
+  padding: 10px;
   flex-shrink: 0;
 }
 .action-bar {
@@ -362,6 +367,8 @@ watch(
   border-radius: 12px;
   padding: 20px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 .app-footer {
   text-align: center;

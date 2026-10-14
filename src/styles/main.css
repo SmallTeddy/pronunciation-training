@@ -37,7 +37,9 @@ body {
 }
 
 #app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 /* 滚动条样式 */

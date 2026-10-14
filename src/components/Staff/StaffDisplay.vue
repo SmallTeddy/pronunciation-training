@@ -39,7 +39,7 @@ const currentNote = computed(() =>
 const hintText = computed(() => {
   if (!currentNote.value) return ''
   const { midi } = currentNote.value
-  let parts = []
+  const parts = []
   if (props.showNoteName) {
     parts.push(props.useFlat ? midiToNoteNameFlat(midi) : midiToNoteName(midi))
   }
@@ -56,70 +56,135 @@ const COLORS = {
   current: '#f59e0b',
 }
 
-// 小节布局：8 个音 = 2 小节，每小节 4 拍 (4/4)
+// 布局：一次显示 3 行五线谱，每行 2 小节，每小节 4 个音符 → 共 24 个音
+const SYSTEMS_PER_GROUP = 3
+const MEASURES_PER_SYSTEM = 2
 const BEATS_PER_MEASURE = 4
-const TOTAL_MEASURES = 2
+const NOTES_PER_SYSTEM = MEASURES_PER_SYSTEM * BEATS_PER_MEASURE // 8
+const TOTAL_NOTES = SYSTEMS_PER_GROUP * NOTES_PER_SYSTEM // 24
 
-/**
- * 为某个谱表在某个小节内创建音符序列（混合音符与四分休止符）
- * @param {Array} items 该小节内的题目 [{ midi, clef, status, originalIndex }]
- * @param {string} clef 'treble' | 'bass'
- * @returns {Array} StaveNote 数组
- */
-function createMeasureNotes(items, clef) {
-  return items.map((item, idxInMeasure) => {
-    // 全局原始索引（用于判断是否为当前音、着色）
-    const globalIdx = item.originalIndex
-    // 判断该拍是否是当前谱表的音符（否则为休止符）
-    const isNote = item.clef === clef
+// 谱面设计尺寸（虚拟坐标，最终按容器等比缩放）
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const STAVE_SPAN = 40 // 五线谱可视高度
+const TOP_MARGIN = 34
+const BOTTOM_PAD = 34
 
-    if (isNote) {
-      const key = midiToVexKey(item.midi)
-      const stemDir = getStemDirection(item.midi, clef)
-      const note = new StaveNote({
-        keys: [key],
-        duration: 'q',
-        stem_direction: stemDir === 'up' ? 1 : -1,
-      })
-      // 着色
-      let color = COLORS.pending
-      if (item.status === 'correct') color = COLORS.correct
-      else if (item.status === 'wrong') color = COLORS.wrong
-      if (globalIdx === props.currentIndex) color = COLORS.current
-      note.setStyle({ fillStyle: color, strokeStyle: color })
-      // 当前音添加 ▲ 标记
-      if (globalIdx === props.currentIndex) {
-        const ann = new Annotation('▲')
-        ann.setVerticalJustification(Annotation.VerticalJustify.TOP)
-        note.addModifier(ann, 0)
-      }
-      return note
-    } else {
-      // 四分休止符：高音谱表休止符放在 b/4（第三线），低音谱表放在 d/3（第三线）
-      const restKey = clef === 'treble' ? 'b/4' : 'd/3'
-      const rest = new StaveNote({
-        keys: [restKey],
-        duration: 'qr',
-      })
-      return rest
-    }
-  })
+// 大谱表（高音 + 低音）
+const GRAND_ABOVE = 16
+const GRAND_BASS_OFFSET = 74
+const GRAND_BELOW = 26
+const GRAND_SYS_H = GRAND_ABOVE + GRAND_BASS_OFFSET + STAVE_SPAN + GRAND_BELOW
+const GRAND_GAP = 8
+
+// 单谱表（高音或低音）
+const SINGLE_ABOVE = 36
+const SINGLE_BELOW = 40
+const SINGLE_SYS_H = SINGLE_ABOVE + STAVE_SPAN + SINGLE_BELOW
+const SINGLE_GAP = 6
+
+const GRAND_DESIGN_H =
+  TOP_MARGIN + SYSTEMS_PER_GROUP * GRAND_SYS_H + (SYSTEMS_PER_GROUP - 1) * GRAND_GAP + BOTTOM_PAD
+const SINGLE_DESIGN_H =
+  TOP_MARGIN + SYSTEMS_PER_GROUP * SINGLE_SYS_H + (SYSTEMS_PER_GROUP - 1) * SINGLE_GAP + BOTTOM_PAD
+
+// 用于估算渲染宽度（贴近真实内容高度，减小等比缩放后的留白）
+const GRAND_EST_H = 600
+const SINGLE_EST_H = 470
+
+function makeRest(clef) {
+  // 四分休止符：高音谱表放在 b/4（第三线），低音谱表放在 d/3（第三线）
+  const restKey = clef === 'treble' ? 'b/4' : 'd/3'
+  return new StaveNote({ keys: [restKey], duration: 'qr' })
 }
 
 /**
- * 渲染大谱表（双小节 4/4 拍布局）
+ * 创建单个音符
+ * @param {Object} item 题目 { midi, clef, status, originalIndex }
+ * @param {string} clef 当前谱表
+ * @param {boolean} forceClef 单谱表模式下，忽略题目自身谱表，强制按当前谱表绘制
  */
-function renderGrandStaff(container, questions) {
-  const width = container.clientWidth || 640
+function makeNote(item, clef, forceClef = false) {
+  // 大谱表模式下，对侧谱表的拍位绘制为四分休止符
+  if (!forceClef && item.clef !== clef) return makeRest(clef)
 
-  // 增大上下边距，确保过高/过低的音（含加线）完整显示
-  const trebleY = 60
-  const staveHeight = 66 // VexFlow 5 线谱表高度
-  const gap = 30
-  const bassY = trebleY + staveHeight + gap
-  const bottomPad = 70
-  const height = bassY + staveHeight + bottomPad
+  const globalIdx = item.originalIndex
+  const key = midiToVexKey(item.midi)
+  const stemDir = getStemDirection(item.midi, clef)
+  const note = new StaveNote({
+    keys: [key],
+    duration: 'q',
+    stem_direction: stemDir === 'up' ? 1 : -1,
+  })
+  let color = COLORS.pending
+  if (item.status === 'correct') color = COLORS.correct
+  else if (item.status === 'wrong') color = COLORS.wrong
+  if (globalIdx === props.currentIndex) color = COLORS.current
+  note.setStyle({ fillStyle: color, strokeStyle: color })
+  // 当前音添加 ▲ 标记
+  if (globalIdx === props.currentIndex) {
+    const ann = new Annotation('▲')
+    ann.setVerticalJustification(Annotation.VerticalJustify.TOP)
+    note.addModifier(ann, 0)
+  }
+  return note
+}
 
+/**
+ * 取某小节的 4 拍（不足则用 null 占位），保留全局 originalIndex
+ */
+function takeMeasure(questions, start) {
+  const items = []
+  for (let i = 0; i < BEATS_PER_MEASURE; i++) {
+    const q = questions[start + i]
+    items.push(q ? { ...q, originalIndex: start + i } : null)
+  }
+  return items
+}
+
+function createMeasureNotes(items, clef, forceClef = false) {
+  return items.map((item) => {
+    if (!item) return makeRest(clef)
+    return makeNote(item, clef, forceClef)
+  })
+}
+
+function drawVoice(context, stave, tickables, formatWidth) {
+  const voice = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
+  voice.addTickables(tickables)
+  new Formatter().joinVoices([voice]).format([voice], formatWidth)
+  voice.draw(context, stave)
+}
+
+/**
+ * 绘制当前音的粉色高亮列
+ */
+function insertHighlight(container, x, prevX, nextX, topY, bottomY) {
+  const colW = (nextX - prevX) / 2
+  const svgEl = container.querySelector('svg')
+  if (!svgEl) return
+  const rect = document.createElementNS(SVG_NS, 'rect')
+  rect.setAttribute('x', x - colW * 0.6)
+  rect.setAttribute('y', topY - 10)
+  rect.setAttribute('width', colW * 1.2)
+  rect.setAttribute('height', bottomY - topY + 20)
+  rect.setAttribute('fill', 'rgba(244, 114, 182, 0.25)')
+  rect.setAttribute('rx', '4')
+  svgEl.insertBefore(rect, svgEl.firstChild)
+}
+
+/**
+ * 记录某个 voice 各拍的 x 坐标
+ */
+function collectXs(tickables, beatXs, offset) {
+  for (let i = 0; i < tickables.length && i < BEATS_PER_MEASURE; i++) {
+    beatXs[offset + i] = tickables[i].getAbsoluteX()
+  }
+}
+
+/**
+ * 渲染大谱表（3 行 × 2 小节，每小节 4 拍）
+ */
+function renderGrandStaff(container, questions, width, height) {
   const renderer = new Renderer(container, Renderer.Backends.SVG)
   renderer.resize(width, height)
   const context = renderer.getContext()
@@ -132,120 +197,79 @@ function renderGrandStaff(container, questions) {
 
   // 第 1 小节需要容纳谱号 + 拍号，第 2 小节不需要
   const m1ExtraWidth = clefWidth + timeSigWidth
-  const measureWidth = (availableWidth - m1ExtraWidth) / TOTAL_MEASURES
-
-  // 第 1 小节
+  const measureWidth = (availableWidth - m1ExtraWidth) / MEASURES_PER_SYSTEM
   const m1X = braceX + 10
-  const trebleStave1 = new Stave(m1X, trebleY, measureWidth + m1ExtraWidth)
-  trebleStave1.addClef('treble').addTimeSignature('4/4')
-  trebleStave1.setContext(context).draw()
-
-  const bassStave1 = new Stave(m1X, bassY, measureWidth + m1ExtraWidth)
-  bassStave1.addClef('bass').addTimeSignature('4/4')
-  bassStave1.setContext(context).draw()
-
-  // 大谱表括号连接
-  const brace = new StaveConnector(trebleStave1, bassStave1)
-  brace.setType(StaveConnector.type.BRACE)
-  brace.setContext(context).draw()
-
-  // 第 2 小节
   const m2X = m1X + measureWidth + m1ExtraWidth
-  const trebleStave2 = new Stave(m2X, trebleY, measureWidth)
-  trebleStave2.setContext(context).draw()
 
-  const bassStave2 = new Stave(m2X, bassY, measureWidth)
-  bassStave2.setContext(context).draw()
+  const beatXs = new Array(TOTAL_NOTES)
+  const systemTops = []
 
-  // 小节间 barline（同时连接高低音谱表）
-  const midBarline = new StaveConnector(trebleStave2, bassStave2)
-  midBarline.setType(StaveConnector.type.SINGLE)
-  midBarline.setContext(context).draw()
+  for (let s = 0; s < SYSTEMS_PER_GROUP; s++) {
+    const trebleY = TOP_MARGIN + GRAND_ABOVE + s * (GRAND_SYS_H + GRAND_GAP)
+    const bassY = trebleY + GRAND_BASS_OFFSET
+    systemTops.push({ trebleY, bassY })
 
-  // 收集当前音的 x 位置（用于粉色高亮列）
-  let currentNoteX = null
-  let currentNoteWidth = null
+    // 第 1 小节
+    const trebleStave1 = new Stave(m1X, trebleY, measureWidth + m1ExtraWidth)
+    trebleStave1.addClef('treble').addTimeSignature('4/4')
+    trebleStave1.setContext(context).draw()
 
-  // 构建每个小节每个谱表的题目
-  const m1Questions = questions.slice(0, BEATS_PER_MEASURE).map((q, i) => ({ ...q, originalIndex: i }))
-  const m2Questions = questions.slice(BEATS_PER_MEASURE, BEATS_PER_MEASURE * 2).map((q, i) => ({ ...q, originalIndex: i + BEATS_PER_MEASURE }))
+    const bassStave1 = new Stave(m1X, bassY, measureWidth + m1ExtraWidth)
+    bassStave1.addClef('bass').addTimeSignature('4/4')
+    bassStave1.setContext(context).draw()
 
-  // 高音谱表
-  const trebleM1Notes = createMeasureNotes(m1Questions, 'treble')
-  const trebleM2Notes = createMeasureNotes(m2Questions, 'treble')
-  // 低音谱表
-  const bassM1Notes = createMeasureNotes(m1Questions, 'bass')
-  const bassM2Notes = createMeasureNotes(m2Questions, 'bass')
+    // 大谱表括号连接
+    const brace = new StaveConnector(trebleStave1, bassStave1)
+    brace.setType(StaveConnector.type.BRACE)
+    brace.setContext(context).draw()
 
-  // 格式化并绘制
-  const trebleM1Voice = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
-  trebleM1Voice.addTickables(trebleM1Notes)
-  new Formatter().joinVoices([trebleM1Voice]).format([trebleM1Voice], measureWidth + m1ExtraWidth - 20)
-  trebleM1Voice.draw(context, trebleStave1)
+    // 第 2 小节
+    const trebleStave2 = new Stave(m2X, trebleY, measureWidth)
+    trebleStave2.setContext(context).draw()
 
-  const bassM1Voice = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
-  bassM1Voice.addTickables(bassM1Notes)
-  new Formatter().joinVoices([bassM1Voice]).format([bassM1Voice], measureWidth + m1ExtraWidth - 20)
-  bassM1Voice.draw(context, bassStave1)
+    const bassStave2 = new Stave(m2X, bassY, measureWidth)
+    bassStave2.setContext(context).draw()
 
-  const trebleM2Voice = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
-  trebleM2Voice.addTickables(trebleM2Notes)
-  new Formatter().joinVoices([trebleM2Voice]).format([trebleM2Voice], measureWidth - 20)
-  trebleM2Voice.draw(context, trebleStave2)
+    // 小节间 barline（同时连接高低音谱表）
+    const midBarline = new StaveConnector(trebleStave2, bassStave2)
+    midBarline.setType(StaveConnector.type.SINGLE)
+    midBarline.setContext(context).draw()
 
-  const bassM2Voice = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
-  bassM2Voice.addTickables(bassM2Notes)
-  new Formatter().joinVoices([bassM2Voice]).format([bassM2Voice], measureWidth - 20)
-  bassM2Voice.draw(context, bassStave2)
+    const base = s * NOTES_PER_SYSTEM
+    const m1Items = takeMeasure(questions, base)
+    const m2Items = takeMeasure(questions, base + BEATS_PER_MEASURE)
 
-  // 找到当前音对应的 x：currentIndex 对应的拍位置
-  if (props.currentIndex >= 0 && props.currentIndex < questions.length) {
-    const beatXs = []
-    // 从每个 voice 的 tickables 中按顺序取 x
-    const m1Tickables = trebleM1Voice.getTickables()
-    const m2Tickables = trebleM2Voice.getTickables()
-    for (let i = 0; i < BEATS_PER_MEASURE; i++) {
-      beatXs.push(m1Tickables[i].getAbsoluteX())
-    }
-    for (let i = 0; i < BEATS_PER_MEASURE; i++) {
-      beatXs.push(m2Tickables[i].getAbsoluteX())
-    }
-    currentNoteX = beatXs[props.currentIndex]
-    // 估算列宽：取相邻音的间距
-    const prev = props.currentIndex > 0 ? beatXs[props.currentIndex - 1] : trebleStave1.getNoteStartX()
-    const next = props.currentIndex < beatXs.length - 1 ? beatXs[props.currentIndex + 1] : trebleStave2.getWidth() + trebleStave2.getX()
-    currentNoteWidth = (next - prev) / 2
+    const trebleM1 = createMeasureNotes(m1Items, 'treble')
+    const trebleM2 = createMeasureNotes(m2Items, 'treble')
+    const bassM1 = createMeasureNotes(m1Items, 'bass')
+    const bassM2 = createMeasureNotes(m2Items, 'bass')
+
+    drawVoice(context, trebleStave1, trebleM1, measureWidth + m1ExtraWidth - 20)
+    drawVoice(context, bassStave1, bassM1, measureWidth + m1ExtraWidth - 20)
+    drawVoice(context, trebleStave2, trebleM2, measureWidth - 20)
+    drawVoice(context, bassStave2, bassM2, measureWidth - 20)
+
+    collectXs(trebleM1, beatXs, base)
+    collectXs(trebleM2, beatXs, base + BEATS_PER_MEASURE)
   }
 
-  // 绘制当前音的粉色高亮列
-  if (currentNoteX !== null) {
-    const colLeft = currentNoteX - currentNoteWidth * 0.6
-    const colRight = currentNoteX + currentNoteWidth * 0.6
-    const svgEl = container.querySelector('svg')
-    if (svgEl) {
-      const SVG_NS = 'http://www.w3.org/2000/svg'
-      const rect = document.createElementNS(SVG_NS, 'rect')
-      rect.setAttribute('x', colLeft)
-      rect.setAttribute('y', trebleY - 10)
-      rect.setAttribute('width', colRight - colLeft)
-      rect.setAttribute('height', bassY + staveHeight - trebleY + 20)
-      rect.setAttribute('fill', 'rgba(244, 114, 182, 0.25)')
-      rect.setAttribute('rx', '4')
-      // 插入到最底层（音符之前）
-      svgEl.insertBefore(rect, svgEl.firstChild)
-    }
+  // 当前音的粉色高亮列
+  const ci = props.currentIndex
+  if (ci >= 0 && ci < TOTAL_NOTES && beatXs[ci] != null) {
+    const { trebleY, bassY } = systemTops[Math.floor(ci / NOTES_PER_SYSTEM)]
+    const x = beatXs[ci]
+    const beatInMeasure = ci % BEATS_PER_MEASURE
+    const prevX = beatInMeasure > 0 && beatXs[ci - 1] != null ? beatXs[ci - 1] : x - 25
+    const nextX =
+      beatInMeasure < BEATS_PER_MEASURE - 1 && beatXs[ci + 1] != null ? beatXs[ci + 1] : x + 25
+    insertHighlight(container, x, prevX, nextX, trebleY, bassY + STAVE_SPAN)
   }
 }
 
 /**
- * 渲染单谱表（高音或低音单独模式），同样采用双小节布局
+ * 渲染单谱表（高音或低音单独模式，3 行 × 2 小节）
  */
-function renderSingle(container, clef, questions) {
-  const width = container.clientWidth || 640
-  const staveY = 50
-  const staveHeight = 66
-  const height = staveY + staveHeight + 60
-
+function renderSingle(container, clef, questions, width, height) {
   const renderer = new Renderer(container, Renderer.Backends.SVG)
   renderer.resize(width, height)
   const context = renderer.getContext()
@@ -255,100 +279,79 @@ function renderSingle(container, clef, questions) {
   const timeSigWidth = 30
   const innerPadding = 20
   const availableWidth = width - startX - innerPadding
+
   const m1ExtraWidth = clefWidth + timeSigWidth
-  const measureWidth = (availableWidth - m1ExtraWidth) / TOTAL_MEASURES
-
+  const measureWidth = (availableWidth - m1ExtraWidth) / MEASURES_PER_SYSTEM
   const m1X = startX + 10
-  const stave1 = new Stave(m1X, staveY, measureWidth + m1ExtraWidth)
-  stave1.addClef(clef).addTimeSignature('4/4')
-  stave1.setContext(context).draw()
-
   const m2X = m1X + measureWidth + m1ExtraWidth
-  const stave2 = new Stave(m2X, staveY, measureWidth)
-  stave2.setContext(context).draw()
 
-  const midBarline = new StaveConnector(stave2, stave2)
-  midBarline.setType(StaveConnector.type.SINGLE)
-  midBarline.setContext(context).draw()
+  const beatXs = new Array(TOTAL_NOTES)
+  const systemTops = []
 
-  const m1Questions = questions.slice(0, BEATS_PER_MEASURE).map((q, i) => ({ ...q, originalIndex: i }))
-  const m2Questions = questions.slice(BEATS_PER_MEASURE, BEATS_PER_MEASURE * 2).map((q, i) => ({ ...q, originalIndex: i + BEATS_PER_MEASURE }))
+  for (let s = 0; s < SYSTEMS_PER_GROUP; s++) {
+    const staveY = TOP_MARGIN + SINGLE_ABOVE + s * (SINGLE_SYS_H + SINGLE_GAP)
+    systemTops.push({ staveY })
 
-  // 单谱表模式：所有拍位都是该谱表的音符（无对侧休止符）
-  const m1Notes = m1Questions.map((item) => {
-    const key = midiToVexKey(item.midi)
-    const stemDir = getStemDirection(item.midi, clef)
-    const note = new StaveNote({
-      keys: [key],
-      duration: 'q',
-      stem_direction: stemDir === 'up' ? 1 : -1,
-    })
-    let color = COLORS.pending
-    if (item.status === 'correct') color = COLORS.correct
-    else if (item.status === 'wrong') color = COLORS.wrong
-    if (item.originalIndex === props.currentIndex) color = COLORS.current
-    note.setStyle({ fillStyle: color, strokeStyle: color })
-    if (item.originalIndex === props.currentIndex) {
-      const ann = new Annotation('▲')
-      ann.setVerticalJustification(Annotation.VerticalJustify.TOP)
-      note.addModifier(ann, 0)
-    }
-    return note
-  })
+    const stave1 = new Stave(m1X, staveY, measureWidth + m1ExtraWidth)
+    stave1.addClef(clef).addTimeSignature('4/4')
+    stave1.setContext(context).draw()
 
-  const m2Notes = m2Questions.map((item) => {
-    const key = midiToVexKey(item.midi)
-    const stemDir = getStemDirection(item.midi, clef)
-    const note = new StaveNote({
-      keys: [key],
-      duration: 'q',
-      stem_direction: stemDir === 'up' ? 1 : -1,
-    })
-    let color = COLORS.pending
-    if (item.status === 'correct') color = COLORS.correct
-    else if (item.status === 'wrong') color = COLORS.wrong
-    if (item.originalIndex === props.currentIndex) color = COLORS.current
-    note.setStyle({ fillStyle: color, strokeStyle: color })
-    if (item.originalIndex === props.currentIndex) {
-      const ann = new Annotation('▲')
-      ann.setVerticalJustification(Annotation.VerticalJustify.TOP)
-      note.addModifier(ann, 0)
-    }
-    return note
-  })
+    const stave2 = new Stave(m2X, staveY, measureWidth)
+    stave2.setContext(context).draw()
 
-  const voice1 = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
-  voice1.addTickables(m1Notes)
-  new Formatter().joinVoices([voice1]).format([voice1], measureWidth + m1ExtraWidth - 20)
-  voice1.draw(context, stave1)
+    const midBarline = new StaveConnector(stave2, stave2)
+    midBarline.setType(StaveConnector.type.SINGLE)
+    midBarline.setContext(context).draw()
 
-  const voice2 = new Voice({ num_beats: BEATS_PER_MEASURE, beat_value: 4 })
-  voice2.addTickables(m2Notes)
-  new Formatter().joinVoices([voice2]).format([voice2], measureWidth - 20)
-  voice2.draw(context, stave2)
+    const base = s * NOTES_PER_SYSTEM
+    const m1Items = takeMeasure(questions, base)
+    const m2Items = takeMeasure(questions, base + BEATS_PER_MEASURE)
 
-  // 当前音粉色高亮列
-  if (props.currentIndex >= 0 && props.currentIndex < questions.length) {
-    const beatXs = []
-    for (const n of voice1.getTickables()) beatXs.push(n.getAbsoluteX())
-    for (const n of voice2.getTickables()) beatXs.push(n.getAbsoluteX())
-    const cx = beatXs[props.currentIndex]
-    const prev = props.currentIndex > 0 ? beatXs[props.currentIndex - 1] : stave1.getNoteStartX()
-    const next = props.currentIndex < beatXs.length - 1 ? beatXs[props.currentIndex + 1] : stave2.getX() + stave2.getWidth()
-    const colW = (next - prev) / 2
-    const svgEl = container.querySelector('svg')
-    if (svgEl) {
-      const SVG_NS = 'http://www.w3.org/2000/svg'
-      const rect = document.createElementNS(SVG_NS, 'rect')
-      rect.setAttribute('x', cx - colW * 0.6)
-      rect.setAttribute('y', staveY - 10)
-      rect.setAttribute('width', colW * 1.2)
-      rect.setAttribute('height', staveHeight + 20)
-      rect.setAttribute('fill', 'rgba(244, 114, 182, 0.25)')
-      rect.setAttribute('rx', '4')
-      svgEl.insertBefore(rect, svgEl.firstChild)
-    }
+    // 单谱表模式：所有拍位都按当前谱表绘制
+    const m1Notes = createMeasureNotes(m1Items, clef, true)
+    const m2Notes = createMeasureNotes(m2Items, clef, true)
+
+    drawVoice(context, stave1, m1Notes, measureWidth + m1ExtraWidth - 20)
+    drawVoice(context, stave2, m2Notes, measureWidth - 20)
+
+    collectXs(m1Notes, beatXs, base)
+    collectXs(m2Notes, beatXs, base + BEATS_PER_MEASURE)
   }
+
+  const ci = props.currentIndex
+  if (ci >= 0 && ci < TOTAL_NOTES && beatXs[ci] != null) {
+    const { staveY } = systemTops[Math.floor(ci / NOTES_PER_SYSTEM)]
+    const x = beatXs[ci]
+    const beatInMeasure = ci % BEATS_PER_MEASURE
+    const prevX = beatInMeasure > 0 && beatXs[ci - 1] != null ? beatXs[ci - 1] : x - 25
+    const nextX =
+      beatInMeasure < BEATS_PER_MEASURE - 1 && beatXs[ci + 1] != null ? beatXs[ci + 1] : x + 25
+    insertHighlight(container, x, prevX, nextX, staveY, staveY + STAVE_SPAN)
+  }
+}
+
+/**
+ * 按谱面实际内容边界设置 viewBox，使其等比缩放并完整适配容器（配合 CSS 的 100% 宽高）
+ */
+function fitSvg(container) {
+  const svg = container.querySelector('svg')
+  if (!svg) return
+  try {
+    const bbox = svg.getBBox()
+    if (bbox && bbox.width > 0 && bbox.height > 0) {
+      const pad = 6
+      svg.setAttribute(
+        'viewBox',
+        `${bbox.x - pad} ${bbox.y - pad} ${bbox.width + pad * 2} ${bbox.height + pad * 2}`
+      )
+    }
+  } catch (e) {
+    // getBBox 不可用时退化为固定 viewBox
+  }
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+  // VexFlow 会在 SVG 上写入固定像素的 style 宽高，这里改为 100% 以随容器等比缩放
+  svg.style.width = '100%'
+  svg.style.height = '100%'
 }
 
 function render() {
@@ -360,11 +363,21 @@ function render() {
     const notes = props.questions
     if (notes.length === 0) return
 
-    if (props.clefMode === 'both') {
-      renderGrandStaff(container, notes)
+    // 依据容器可用宽高比推导渲染宽度，保证 3 行谱表等比缩放后尽量铺满
+    const cw = Math.max(container.clientWidth || 0, 320)
+    const ch = Math.max(container.clientHeight || 0, 200)
+    const isGrand = props.clefMode === 'both'
+    const designHeight = isGrand ? GRAND_DESIGN_H : SINGLE_DESIGN_H
+    const estHeight = isGrand ? GRAND_EST_H : SINGLE_EST_H
+    const renderWidth = Math.max(700, Math.round((estHeight * cw) / ch))
+
+    if (isGrand) {
+      renderGrandStaff(container, notes, renderWidth, designHeight)
     } else {
-      renderSingle(container, props.clefMode, notes)
+      renderSingle(container, props.clefMode, notes, renderWidth, designHeight)
     }
+
+    fitSvg(container)
   })
 }
 
@@ -380,19 +393,24 @@ watch(
 .staff-container {
   position: relative;
   width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 .staff-svg-wrapper {
+  flex: 1;
   width: 100%;
-  overflow: visible;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .staff-svg-wrapper :deep(svg) {
-  width: 100%;
-  height: auto;
+  width: 100% !important;
+  height: 100% !important;
   display: block;
-  overflow: visible;
 }
 .hint-label {
   position: sticky;
