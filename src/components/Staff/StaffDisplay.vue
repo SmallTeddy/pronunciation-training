@@ -94,10 +94,9 @@ const GRAND_EST_H = 720
 const SINGLE_EST_H = 560
 
 function makeRest(clef) {
-  // 四分休止符：VexFlow 的四分休止符字形从基准线向上延伸，
-  // 为使休止符视觉居中于五线谱，将基准线设在第二线
-  // （高音谱表 g/4 = 第二线，低音谱表 b/2 = 第二线）
-  const restKey = clef === 'treble' ? 'g/4' : 'b/2'
+  // 四分休止符：居中于五线谱第三线（中间线）
+  // 高音谱表第三线 = B4 (b/4)，低音谱表第三线 = D3 (d/3)
+  const restKey = clef === 'treble' ? 'b/4' : 'd/3'
   return new StaveNote({ keys: [restKey], duration: 'qr' })
 }
 
