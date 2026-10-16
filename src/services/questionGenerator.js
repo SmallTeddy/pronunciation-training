@@ -53,9 +53,10 @@ export function getCandidates(settings, practiceMode, noteStats) {
 
   if (practiceMode === 'treble') clefs = ['treble']
   else if (practiceMode === 'bass') clefs = ['bass']
-  else if (practiceMode === 'mixed' || practiceMode === 'free' || practiceMode === 'timed' || practiceMode === 'wrong') {
+  else if (practiceMode === 'mixed') {
     clefs = ['treble', 'bass']
   } else {
+    // free / timed / wrong 等模式：尊重用户的谱表选择（clefMode）
     clefs = settings.clefMode === 'both' ? ['treble', 'bass'] : [settings.clefMode]
   }
 
